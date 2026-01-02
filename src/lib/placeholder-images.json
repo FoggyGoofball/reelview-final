@@ -1,0 +1,16 @@
+{
+  "placeholderImages": [
+    {
+      "id": "550-thumb",
+      "description": "Thumbnail for Fight Club",
+      "imageUrl": "https://image.tmdb.org/t/p/w500/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg",
+      "imageHint": "movie poster"
+    },
+    {
+      "id": "550-hero",
+      "description": "Hero image for Fight Club",
+      "imageUrl": "https://image.tmdb.org/t/p/w1280/hZkgoQYus5vegHoetLkJoBv9oA.jpg",
+      "imageHint": "dramatic scene"
+    }
+  ]
+}

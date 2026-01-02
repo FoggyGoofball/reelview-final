@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ReelView Chromecast Receiver</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 100%;
+            height: 100%;
+        }
+        
+        body {
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #fff;
+        }
+        
+        video {
+            width: 100%;
+            height: 100%;
+            background: #000;
+        }
+        
+        #loading {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            text-align: center;
+        }
+        
+        #spinner {
+            border: 3px solid rgba(255,255,255,0.2);
+            border-top: 3px solid #fff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        #status {
+            font-size: 14px;
+            color: #999;
+            max-width: 300px;
+        }
+        
+        #error {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            font-size: 12px;
+            color: #f44;
+            font-family: monospace;
+            max-width: 400px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <video id="player"></video>
+    <div id="loading">
+        <div id="spinner"></div>
+        <div id="status">Initializing Chromecast Receiver...</div>
+    </div>
+    <div id="error"></div>
+
+    <script>
+        console.log('[ReelView Receiver] Loading...');
+        
+        const player = document.getElementById('player');
+        const loading = document.getElementById('loading');
+        const status = document.getElementById('status');
+        const error = document.getElementById('error');
+        
+        function showError(msg) {
+            console.error('[ReelView Receiver] Error:', msg);
+            error.textContent = 'Error: ' + msg;
+            error.style.display = 'block';
+            status.textContent = 'Error occurred';
+        }
+        
+        function hideLoading() {
+            loading.style.display = 'none';
+        }
+        
+        function showLoading(msg) {
+            loading.style.display = 'flex';
+            status.textContent = msg;
+        }
+        
+        // Initialize Cast Receiver
+        try {
+            if (!window.cast || !cast.receiver) {
+                throw new Error('Cast SDK not available');
+            }
+            
+            const castReceiverManager = cast.receiver.CastReceiverManager.getInstance();
+            console.log('[ReelView Receiver] CastReceiverManager obtained');
+            
+            const mediaManager = new cast.receiver.media.MediaManager(player);
+            console.log('[ReelView Receiver] MediaManager created');
+            
+            // Handle Cast messages
+            castReceiverManager.onSenderConnected = function(event) {
+                console.log('[ReelView Receiver] Sender connected');
+                showLoading('Connected - waiting for stream...');
+            };
+            
+            castReceiverManager.onSenderDisconnected = function(event) {
+                console.log('[ReelView Receiver] Sender disconnected');
+                showLoading('Sender disconnected');
+            };
+            
+            // Handle custom messages with headers
+            const customBus = castReceiverManager.getCastMessageBus('urn:x-cast:com.reelview.cast');
+            if (customBus) {
+                customBus.onMessage = function(event) {
+                    console.log('[ReelView Receiver] Custom message received');
+                    loadStreamWithHeaders(event.data);
+                };
+            }
+            
+            // Also handle standard media load requests
+            mediaManager.onLoadMetadata = function() {
+                console.log('[ReelView Receiver] Media load metadata');
+            };
+            
+            castReceiverManager.onReady = function(event) {
+                console.log('[ReelView Receiver] Cast Receiver ready');
+                castReceiverManager.setApplicationState('Ready');
+                showLoading('Ready - waiting for sender...');
+            };
+            
+            // Start the receiver
+            castReceiverManager.start({
+                receiverApplicationId: cast.receiver.system.ApplicationID.DEFAULT_MEDIA_RECEIVER
+            });
+            
+            console.log('[ReelView Receiver] Started successfully');
+            
+        } catch (e) {
+            showError(e.message);
+        }
+        
+        // Load stream with authentication headers
+        function loadStreamWithHeaders(data) {
+            try {
+                console.log('[ReelView Receiver] Loading stream:', data.url);
+                const url = data.url;
+                const title = data.title || 'ReelView Stream';
+                const headers = data.headers || {};
+                
+                showLoading('Loading: ' + title);
+                
+                // For HLS streams, fetch M3U8 with headers first
+                if (url.includes('.m3u8')) {
+                    console.log('[ReelView Receiver] Detected HLS stream');
+                    
+                    fetch(url, {
+                        method: 'GET',
+                        headers: headers,
+                        credentials: 'include'
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('M3U8 fetch failed: HTTP ' + response.status);
+                        }
+                        return response.text();
+                    })
+                    .then(m3u8Content => {
+                        console.log('[ReelView Receiver] M3U8 received, attempting to play');
+                        
+                        // Try HLS.js if available
+                        if (window.Hls && Hls.isSupported()) {
+                            console.log('[ReelView Receiver] Using HLS.js');
+                            const hls = new Hls({
+                                xhrSetup: function(xhr) {
+                                    // Apply headers to segment requests
+                                    Object.keys(headers).forEach(key => {
+                                        xhr.setRequestHeader(key, headers[key]);
+                                    });
+                                }
+                            });
+                            hls.loadSource(url);
+                            hls.attachMedia(player);
+                            hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                                console.log('[ReelView Receiver] HLS manifest parsed, starting playback');
+                                hideLoading();
+                                player.play();
+                            });
+                            hls.on(Hls.Events.ERROR, function(event, data) {
+                                if (data.fatal) {
+                                    showError('HLS Error: ' + data.type);
+                                }
+                            });
+                        } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
+                            // Native HLS support
+                            console.log('[ReelView Receiver] Using native HLS support');
+                            player.src = url;
+                            hideLoading();
+                            player.play();
+                        } else {
+                            // Fallback
+                            console.log('[ReelView Receiver] Using fallback playback');
+                            player.src = url;
+                            hideLoading();
+                            player.play();
+                        }
+                    })
+                    .catch(err => {
+                        showError('Failed to load M3U8: ' + err.message);
+                    });
+                } else {
+                    // Direct video playback
+                    console.log('[ReelView Receiver] Direct video playback');
+                    player.src = url;
+                    hideLoading();
+                    player.play();
+                }
+            } catch (e) {
+                showError('Stream load error: ' + e.message);
+            }
+        }
+    </script>
+    
+    <!-- Load Cast SDK -->
+    <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js" async></script>
+    
+    <!-- Load HLS.js as fallback for better HLS support -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest" async></script>
+</body>
+</html>
